@@ -1,0 +1,155 @@
+* {
+    color: @text;
+    font-family: "Segoe UI";
+    font-size: 14px;
+}
+
+QMainWindow, QWidget {
+    background: @background;
+}
+
+#sidebar {
+    background: @panel;
+    border-right: 1px solid @line;
+}
+
+#logo {
+    color: @accent;
+    font-size: 29px;
+    font-weight: 900;
+    letter-spacing: 2px;
+}
+
+#muted, #number {
+    color: @muted;
+}
+
+#number {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+#name {
+    font-size: 44px;
+    font-weight: 800;
+}
+
+#section {
+    color: @accent;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+#artwork {
+    background: @panel;
+    border: 1px solid @line;
+    border-radius: 22px;
+}
+
+QLineEdit {
+    background: @panel_alt;
+    border: 1px solid @line;
+    border-radius: 9px;
+    padding: 10px;
+}
+
+QLineEdit:focus {
+    border-color: @accent;
+}
+
+QCheckBox {
+    color: @text;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid @line;
+    border-radius: 4px;
+    background: @panel_alt;
+}
+
+QCheckBox::indicator:checked {
+    background: @accent;
+    border-color: @accent;
+}
+
+QListWidget {
+    background: transparent;
+    border: 0;
+    outline: 0;
+}
+
+QListWidget::item {
+    padding: 10px;
+    margin: 2px 0;
+    border-radius: 8px;
+}
+
+QListWidget::item:hover {
+    background: @panel_alt;
+}
+
+QListWidget::item:selected {
+    background: @accent;
+}
+
+QPushButton#favorite {
+    background: @panel_alt;
+    border: 1px solid @line;
+    border-radius: 9px;
+    padding: 9px 13px;
+}
+
+QPushButton#favorite:hover {
+    border-color: @accent;
+}
+
+QPushButton#favorite:pressed {
+    background: @accent_dark;
+}
+
+QProgressBar {
+    background: @panel_alt;
+    border: 0;
+    border-radius: 7px;
+    height: 15px;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background: @accent;
+    border-radius: 7px;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 9px;
+}
+
+QScrollBar::handle:vertical {
+    background: @line;
+    border-radius: 4px;
+    min-height: 35px;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 9px;
+}
+
+QScrollBar::handle:horizontal {
+    background: @line;
+    border-radius: 4px;
+    min-width: 35px;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0;
+    height: 0;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}

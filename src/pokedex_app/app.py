@@ -1,42 +1,90 @@
 import sys
-from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QApplication,
+    QCheckBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 
+from . import __version__
 from .api import PokeApiError, pokemon_details, pokemon_sprite
 from .data import all_pokemon
+from .log import LOG_FILE, get_logger, install_excepthook, setup_logging
+from .paths import ASSETS_DIR
 from .storage import load_favorites, prepare_directories, save_favorites
-from .theme import COLORS, TYPE_COLORS
+from .theme import BADGE_TEXT, COLORS, TYPE_COLORS, stylesheet
 
+logger = get_logger(__name__)
 
-ROOT = Path(__file__).resolve().parents[2]
-ASSETS = ROOT / "assets"
+MAX_BASE_STAT = 255
+
+# Ordem canônica dos atributos na PokéAPI (dicts não preservam ordem ao
+# atravessar sinais do Qt, então ordenamos explicitamente).
+STAT_ORDER = (
+    "hp",
+    "attack",
+    "defense",
+    "special-attack",
+    "special-defense",
+    "speed",
+)
 
 
 class WorkerSignals(QObject):
-    loaded = Signal(dict, object)
-    failed = Signal(str)
+    # ``object`` evita a conversão para QVariantMap, que ordena as chaves.
+    loaded = Signal(int, object, object)
+    failed = Signal(int, str)
+    finished = Signal(int)
+
+
+def ordered_stats(stats: dict) -> list[tuple[str, int]]:
+    """Devolve os atributos na ordem canônica, mantendo extras ao final."""
+    ordered = [(name, stats[name]) for name in STAT_ORDER if name in stats]
+    extras = [(name, value) for name, value in stats.items() if name not in STAT_ORDER]
+    return ordered + extras
 
 
 class DetailsWorker(QRunnable):
-    def __init__(self, number: int):
+    """Busca os dados de um Pokémon sem bloquear a interface."""
+
+    def __init__(self, number: int, token: int):
         super().__init__()
         self.number = number
+        self.token = token
         self.signals = WorkerSignals()
 
-    def run(self):
+    def run(self) -> None:
         try:
             details = pokemon_details(self.number)
-            sprite = pokemon_sprite(details)
-            self.signals.loaded.emit(details, sprite)
-        except (PokeApiError, OSError, ValueError) as exc:
-            self.signals.failed.emit(str(exc))
+            try:
+                sprite = pokemon_sprite(details)
+            except (PokeApiError, OSError, ValueError) as exc:
+                logger.warning("Imagem indisponível para o Pokémon #%03d: %s", self.number, exc)
+                sprite = None
+        except (PokeApiError, OSError, ValueError, KeyError, TypeError) as exc:
+            logger.warning("Falha ao carregar o Pokémon #%03d: %s", self.number, exc)
+            self.signals.failed.emit(self.token, str(exc))
+        except Exception:
+            logger.exception("Erro inesperado ao carregar o Pokémon #%03d", self.number)
+            self.signals.failed.emit(self.token, "Erro inesperado ao carregar os dados.")
+        else:
+            self.signals.loaded.emit(self.token, details, sprite)
+        finally:
+            self.signals.finished.emit(self.token)
 
 
 class StatRow(QWidget):
@@ -45,14 +93,14 @@ class StatRow(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 3, 0, 3)
         name = QLabel(label.replace("special-", "sp. ").upper())
-        name.setFixedWidth(85)
+        name.setMinimumWidth(85)
         name.setObjectName("muted")
-        bar = QProgressBar()
-        bar.setRange(0, 180)
-        bar.setValue(value)
-        bar.setFormat(str(value))
+        self.bar = QProgressBar()
+        self.bar.setRange(0, MAX_BASE_STAT)
+        self.bar.setValue(value)
+        self.bar.setFormat(str(value))
         layout.addWidget(name)
-        layout.addWidget(bar)
+        layout.addWidget(self.bar)
 
 
 class MainWindow(QMainWindow):
@@ -62,11 +110,14 @@ class MainWindow(QMainWindow):
         self.pokemon = all_pokemon()
         self.favorites = load_favorites()
         self.current_number = 1
+        self._loaded_number: int | None = None
+        self._request_token = 0
+        self._workers: dict[int, DetailsWorker] = {}
         self.thread_pool = QThreadPool.globalInstance()
         self.setWindowTitle("Pokédex Kanto")
         self.setMinimumSize(980, 650)
         self.resize(1180, 760)
-        self.setWindowIcon(QIcon(str(ASSETS / "pokeball.svg")))
+        self.setWindowIcon(QIcon(str(ASSETS_DIR / "pokeball.svg")))
         self._build_ui()
         self._apply_style()
         self._fill_list()
@@ -90,10 +141,12 @@ class MainWindow(QMainWindow):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Buscar por nome ou número…")
         self.search.setClearButtonEnabled(True)
+        self.search.setAccessibleName("Buscar Pokémon")
         self.search.textChanged.connect(self._fill_list)
         self.only_favorites = QCheckBox("Mostrar somente favoritos")
         self.only_favorites.toggled.connect(self._fill_list)
         self.list_widget = QListWidget()
+        self.list_widget.setAccessibleName("Lista de Pokémon")
         self.list_widget.currentItemChanged.connect(self._selection_changed)
         side.addWidget(logo)
         side.addWidget(subtitle)
@@ -131,10 +184,12 @@ class MainWindow(QMainWindow):
 
         self.status = QLabel("Carregando informações…")
         self.status.setObjectName("muted")
+        self.status.setWordWrap(True)
         self.types = QLabel()
         self.types.setObjectName("types")
         self.measurements = QLabel()
         self.abilities = QLabel()
+        self.abilities.setWordWrap(True)
         section = QLabel("ATRIBUTOS BASE")
         section.setObjectName("section")
         self.stats_box = QVBoxLayout()
@@ -154,32 +209,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _apply_style(self):
-        self.setStyleSheet(f"""
-            * {{ color: {COLORS['text']}; font-family: 'Segoe UI'; font-size: 14px; }}
-            QMainWindow, QWidget {{ background: {COLORS['background']}; }}
-            #sidebar {{ background: {COLORS['panel']}; border-right: 1px solid {COLORS['line']}; }}
-            #logo {{ color: {COLORS['accent']}; font-size: 29px; font-weight: 900; letter-spacing: 2px; }}
-            #muted, #number {{ color: {COLORS['muted']}; }}
-            #number {{ font-size: 18px; font-weight: 700; }}
-            #name {{ font-size: 44px; font-weight: 800; }}
-            #section {{ color: {COLORS['accent']}; font-weight: 800; letter-spacing: 1px; }}
-            #artwork {{ background: {COLORS['panel']}; border: 1px solid {COLORS['line']}; border-radius: 22px; }}
-            QLineEdit {{ background: {COLORS['panel_alt']}; border: 1px solid {COLORS['line']}; border-radius: 9px; padding: 10px; }}
-            QListWidget {{ background: transparent; border: 0; outline: 0; }}
-            QListWidget::item {{ padding: 10px; margin: 2px 0; border-radius: 8px; }}
-            QListWidget::item:selected {{ background: {COLORS['accent']}; }}
-            QPushButton#favorite {{ background: {COLORS['panel_alt']}; border: 1px solid {COLORS['line']}; border-radius: 9px; padding: 9px 13px; }}
-            QPushButton#favorite:hover {{ border-color: {COLORS['accent']}; }}
-            QProgressBar {{ background: {COLORS['panel_alt']}; border: 0; border-radius: 7px; height: 15px; text-align: center; }}
-            QProgressBar::chunk {{ background: {COLORS['accent']}; border-radius: 7px; }}
-            QScrollBar:vertical {{ background: transparent; width: 9px; }}
-            QScrollBar::handle:vertical {{ background: {COLORS['line']}; border-radius: 4px; min-height: 35px; }}
-        """)
+        self.setStyleSheet(stylesheet())
 
     def _fill_list(self):
         current = self.current_number
         query = self.search.text().strip().lower() if hasattr(self, "search") else ""
-        favorites_only = self.only_favorites.isChecked() if hasattr(self, "only_favorites") else False
+        favorites_only = (
+            self.only_favorites.isChecked() if hasattr(self, "only_favorites") else False
+        )
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
         chosen_row = -1
@@ -203,43 +240,90 @@ class MainWindow(QMainWindow):
         if current is None:
             return
         pokemon = current.data(Qt.UserRole)
-        self.current_number = pokemon["id"]
-        self.number_label.setText(f"#{pokemon['id']:03d}")
+        if not isinstance(pokemon, dict):
+            return
+
+        number = pokemon["id"]
+        if number == self.current_number and self._loaded_number == number:
+            # A lista foi reconstruída (busca/favoritos): nada mudou de fato.
+            return
+
+        self.current_number = number
+        self._loaded_number = None
+        self.number_label.setText(f"#{number:03d}")
         self.name_label.setText(pokemon["name"])
         self.artwork.setPixmap(QPixmap())
+        self.artwork.setToolTip("")
         self.artwork.setText("Carregando…")
         self.status.setText("Buscando dados locais ou sincronizando com a PokéAPI…")
+        self.status.setToolTip("")
         self.types.clear()
         self.measurements.clear()
         self.abilities.clear()
         self._clear_stats()
         self._update_favorite_button()
-        worker = DetailsWorker(pokemon["id"])
+        self._fetch_details(number)
+
+    def _fetch_details(self, number: int) -> None:
+        self._request_token += 1
+        token = self._request_token
+        worker = DetailsWorker(number, token)
         worker.signals.loaded.connect(self._details_loaded)
         worker.signals.failed.connect(self._details_failed)
+        worker.signals.finished.connect(self._worker_finished)
+        self._workers[token] = worker
         self.thread_pool.start(worker)
 
-    def _details_loaded(self, details: dict, sprite):
-        if details["id"] != self.current_number:
+    def _worker_finished(self, token: int) -> None:
+        self._workers.pop(token, None)
+
+    def _details_loaded(self, token: int, details: dict, sprite):
+        if token != self._request_token:
+            logger.debug("Ignorando resposta obsoleta do Pokémon #%03d", details.get("id", 0))
             return
+
+        self._loaded_number = details["id"]
         self.status.setText("Dados armazenados localmente para os próximos acessos.")
         badges = []
         for kind in details["types"]:
             color = TYPE_COLORS.get(kind, COLORS["accent"])
-            badges.append(f"<span style='background:{color}; color:#101318; padding:5px 10px; font-weight:700;'>{kind.upper()}</span>")
+            badges.append(
+                f"<span style='background:{color}; color:{BADGE_TEXT}; padding:5px 10px;"
+                f" font-weight:700;'>{kind.upper()}</span>"
+            )
         self.types.setText("  ".join(badges))
-        self.measurements.setText(f"Altura: {details['height']:.1f} m     •     Peso: {details['weight']:.1f} kg")
+        self.measurements.setText(
+            f"Altura: {details['height']:.1f} m     •     Peso: {details['weight']:.1f} kg"
+        )
         abilities = ", ".join(name.replace("-", " ").title() for name in details["abilities"])
         self.abilities.setText(f"Habilidades: {abilities}")
-        for name, value in details["stats"].items():
+        self._clear_stats()
+        for name, value in ordered_stats(details["stats"]):
             self.stats_box.addWidget(StatRow(name, value))
-        if sprite:
-            pixmap = QPixmap(str(sprite)).scaled(280, 260, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.artwork.setPixmap(pixmap)
-            self.artwork.setText("")
+        self._show_artwork(sprite)
 
-    def _details_failed(self, message: str):
-        self.status.setText("Sem dados em cache. Conecte-se à internet e selecione novamente.")
+    def _show_artwork(self, sprite) -> None:
+        pixmap = QPixmap(str(sprite)) if sprite else QPixmap()
+        if pixmap.isNull():
+            if sprite:
+                logger.warning(
+                    "Imagem inválida para o Pokémon #%03d: %s", self.current_number, sprite
+                )
+            self.artwork.setPixmap(QPixmap())
+            self.artwork.setText("Imagem indisponível")
+            return
+        self.artwork.setPixmap(pixmap.scaled(280, 260, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _details_failed(self, token: int, message: str) -> None:
+        if token != self._request_token:
+            return
+        self._loaded_number = None
+        logger.warning(
+            "Detalhes indisponíveis para o Pokémon #%03d: %s", self.current_number, message
+        )
+        self.status.setText(message)
+        self.status.setToolTip(message)
+        self.artwork.setPixmap(QPixmap())
         self.artwork.setText("Imagem indisponível")
 
     def _clear_stats(self):
@@ -259,14 +343,29 @@ class MainWindow(QMainWindow):
 
     def _update_favorite_button(self):
         favorite = self.current_number in self.favorites
-        self.favorite_button.setText("★  Remover dos favoritos" if favorite else "☆  Adicionar aos favoritos")
+        self.favorite_button.setText(
+            "★  Remover dos favoritos" if favorite else "☆  Adicionar aos favoritos"
+        )
+
+
+def _report_unexpected_error() -> None:
+    QMessageBox.critical(
+        None,
+        "Pokédex Kanto",
+        f"Ocorreu um erro inesperado.\n\nDetalhes salvos em:\n{LOG_FILE}",
+    )
 
 
 def run() -> int:
+    setup_logging()
     app = QApplication(sys.argv)
     app.setApplicationName("Pokédex Kanto")
+    app.setOrganizationName("PokedexKanto")
+    app.setApplicationVersion(__version__)
     app.setFont(QFont("Segoe UI", 10))
+    install_excepthook(_report_unexpected_error)
     window = MainWindow()
     window.show()
-    return app.exec()
-
+    exit_code = app.exec()
+    logger.info("Aplicativo encerrado com código %s", exit_code)
+    return exit_code

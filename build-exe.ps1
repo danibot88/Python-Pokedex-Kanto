@@ -1,24 +1,35 @@
 $ErrorActionPreference = "Stop"
 
-function Find-Python {
-    $bundled = "C:\Users\Pichau\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-    if (Test-Path $bundled) { return $bundled }
+. (Join-Path $PSScriptRoot "scripts\common.ps1")
 
-    foreach ($command in @("py", "python", "python3")) {
-        $found = Get-Command $command -ErrorAction SilentlyContinue
-        if ($found) { return $found.Source }
-    }
+$root = Get-ProjectRoot
+$python = Initialize-Venv -Requirements "requirements-dev.txt"
 
-    throw "Python não foi encontrado. Instale o Python 3.11+ em https://python.org/downloads/ e tente novamente."
+$pyinstallerArgs = @(
+    "-m", "PyInstaller",
+    "--noconfirm", "--clean", "--windowed", "--onefile",
+    "--name", "Pokedex-Kanto",
+    "--add-data", "assets;assets"
+)
+
+# Alguns Pythons embarcados (ex.: runtimes com patch de CA) carregam um PEM
+# extra ao criar o contexto SSL. Empacotamos o arquivo quando ele existir para
+# que as requisições HTTPS funcionem também no executável.
+$sslDir = (& $python -c "import ssl, os; print(os.path.dirname(ssl.__file__))").Trim()
+$sslPatch = Join-Path $sslDir "codex-rejected-cas.pem"
+if (Test-Path $sslPatch) {
+    Write-Host "Incluindo o pacote de CA do Python local: $sslPatch"
+    $pyinstallerArgs += @("--add-data", "$sslPatch;.")
 }
 
-$python = Find-Python
-if (-not (Test-Path ".venv")) {
-    & $python -m venv .venv
+$pyinstallerArgs += "main.py"
+
+Push-Location $root
+try {
+    & $python @pyinstallerArgs
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao gerar o executável." }
+} finally {
+    Pop-Location
 }
-& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-& .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --windowed --onefile `
-    --name "Pokedex-Kanto" `
-    --add-data "assets;assets" `
-    main.py
+
 Write-Host "Executável criado em: dist\Pokedex-Kanto.exe"

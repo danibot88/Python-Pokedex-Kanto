@@ -1,20 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-function Find-Python {
-    $bundled = "C:\Users\Pichau\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-    if (Test-Path $bundled) { return $bundled }
+. (Join-Path $PSScriptRoot "scripts\common.ps1")
 
-    foreach ($command in @("py", "python", "python3")) {
-        $found = Get-Command $command -ErrorAction SilentlyContinue
-        if ($found) { return $found.Source }
-    }
-
-    throw "Python não foi encontrado. Instale o Python 3.11+ em https://python.org/downloads/ e tente novamente."
-}
-
-$python = Find-Python
-if (-not (Test-Path ".venv")) {
-    & $python -m venv .venv
-}
-& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-& .\.venv\Scripts\python.exe main.py
+$python = Initialize-Venv -Requirements "requirements.txt"
+& $python (Join-Path (Get-ProjectRoot) "main.py")
+exit $LASTEXITCODE
