@@ -4,6 +4,10 @@ Aplicativo desktop em Python para explorar os 151 Pokémon da primeira geração
 Não usa navegador. Informações e imagens consultadas na PokéAPI ficam salvas no
 computador para os próximos acessos.
 
+Projeto de estudo de Python e desenvolvimento de interfaces desktop, usando
+PySide6, a [PokéAPI](https://pokeapi.co/), persistência local, testes com
+pytest e empacotamento com PyInstaller.
+
 ## Recursos
 
 - Lista completa de Kanto disponível imediatamente
@@ -37,6 +41,15 @@ Na primeira consulta de cada Pokémon é necessária conexão com a internet. De
 os dados consultados funcionam a partir do cache local.
 
 ## Testes e qualidade
+
+Após executar o aplicativo pelo menos uma vez, instale as ferramentas de
+desenvolvimento no ambiente virtual:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+Execute então:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
@@ -87,3 +100,12 @@ layout principal está no método `MainWindow._build_ui`, em
   e `%LOCALAPPDATA%\PokedexKanto\sprites`; o app baixa novamente.
 - **Erro inesperado**: consulte `%LOCALAPPDATA%\PokedexKanto\logs\app.log`.
 - **Outro diretório de dados**: defina `POKEDEX_APP_DIR` antes de abrir o app.
+
+## Créditos e licença
+
+Os dados e as imagens são obtidos da [PokéAPI](https://pokeapi.co/). Pokémon
+e os nomes e imagens associados pertencem a seus respectivos titulares. Este é
+um projeto independente de estudo, sem afiliação oficial.
+
+O código deste projeto está disponível sob a [licença MIT](LICENSE). A licença
+não concede direitos sobre marcas, personagens ou conteúdo de terceiros.

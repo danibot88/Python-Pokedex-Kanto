@@ -12,16 +12,6 @@ $pyinstallerArgs = @(
     "--add-data", "assets;assets"
 )
 
-# Alguns Pythons embarcados (ex.: runtimes com patch de CA) carregam um PEM
-# extra ao criar o contexto SSL. Empacotamos o arquivo quando ele existir para
-# que as requisições HTTPS funcionem também no executável.
-$sslDir = (& $python -c "import ssl, os; print(os.path.dirname(ssl.__file__))").Trim()
-$sslPatch = Join-Path $sslDir "codex-rejected-cas.pem"
-if (Test-Path $sslPatch) {
-    Write-Host "Incluindo o pacote de CA do Python local: $sslPatch"
-    $pyinstallerArgs += @("--add-data", "$sslPatch;.")
-}
-
 $pyinstallerArgs += "main.py"
 
 Push-Location $root

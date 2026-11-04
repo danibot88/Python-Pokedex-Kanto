@@ -53,7 +53,9 @@ function Initialize-Venv {
         $sha.Dispose()
     }
 
-    $marker = Join-Path $root ".venv\.requirements.sha256"
+    # Cada conjunto tem seu próprio marcador: instalar apenas os requisitos
+    # do aplicativo não significa que as ferramentas de desenvolvimento existem.
+    $marker = Join-Path $root ".venv\.$Requirements.sha256"
     $current = if (Test-Path $marker) { (Get-Content $marker -Raw).Trim() } else { "" }
 
     if ($current -ne $hash) {
